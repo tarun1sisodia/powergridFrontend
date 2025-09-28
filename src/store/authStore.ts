@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { authAPI } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { LOCAL_STORAGE_KEYS } from '@/lib/constants';
 import type { IAuthStore, ILoginCredentials, IRegisterData, IUser } from '@/types';
+import type { User, Session } from '@supabase/supabase-js';
 
 export const useAuthStore = create<IAuthStore>()(
   persist(
@@ -13,51 +14,82 @@ export const useAuthStore = create<IAuthStore>()(
 
       login: async (credentials: ILoginCredentials) => {
         try {
-          const response = await authAPI.login(credentials);
-          if (response.success && response.data) {
-            const { user, token } = response.data;
-            
-            // Store token in localStorage
-            localStorage.setItem(LOCAL_STORAGE_KEYS.AUTH_TOKEN, token);
-            
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: credentials.email,
+            password: credentials.password,
+          });
+
+          if (error) throw error;
+
+          if (data.user && data.session) {
+            // Transform Supabase user to IUser format
+            const user: IUser = {
+              id: data.user.id,
+              email: data.user.email!,
+              name: data.user.user_metadata?.name || data.user.email!,
+              role: data.user.user_metadata?.role || 'user',
+              department: data.user.user_metadata?.department,
+              createdAt: data.user.created_at,
+              updatedAt: data.user.updated_at,
+            };
+
             set({
               user,
-              token,
+              token: data.session.access_token,
               isAuthenticated: true,
             });
-          } else {
-            throw new Error(response.message || 'Login failed');
           }
         } catch (error: any) {
-          throw new Error(error.response?.data?.message || error.message || 'Login failed');
+          throw new Error(error.message || 'Login failed');
         }
       },
 
       register: async (userData: IRegisterData) => {
         try {
-          const response = await authAPI.register(userData);
-          if (response.success && response.data) {
-            const { user, token } = response.data;
-            
-            // Store token in localStorage
-            localStorage.setItem(LOCAL_STORAGE_KEYS.AUTH_TOKEN, token);
-            
+          const { data, error } = await supabase.auth.signUp({
+            email: userData.email,
+            password: userData.password,
+            options: {
+              emailRedirectTo: `${window.location.origin}/`,
+              data: {
+                name: userData.name,
+                department: userData.department,
+                role: 'user',
+              }
+            }
+          });
+
+          if (error) throw error;
+
+          if (data.user && data.session) {
+            // Transform Supabase user to IUser format
+            const user: IUser = {
+              id: data.user.id,
+              email: data.user.email!,
+              name: userData.name,
+              role: 'user',
+              department: userData.department,
+              createdAt: data.user.created_at,
+              updatedAt: data.user.updated_at,
+            };
+
             set({
               user,
-              token,
+              token: data.session.access_token,
               isAuthenticated: true,
             });
-          } else {
-            throw new Error(response.message || 'Registration failed');
           }
         } catch (error: any) {
-          throw new Error(error.response?.data?.message || error.message || 'Registration failed');
+          throw new Error(error.message || 'Registration failed');
         }
       },
 
-      logout: () => {
-        // Clear localStorage
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.AUTH_TOKEN);
+      logout: async () => {
+        try {
+          await supabase.auth.signOut();
+        } catch (error) {
+          console.error('Logout error:', error);
+        }
         
         // Reset store
         set({
@@ -65,37 +97,38 @@ export const useAuthStore = create<IAuthStore>()(
           token: null,
           isAuthenticated: false,
         });
-
-        // Optional: Call logout API
-        authAPI.logout().catch(console.error);
       },
 
       checkAuth: async () => {
-        const token = localStorage.getItem(LOCAL_STORAGE_KEYS.AUTH_TOKEN);
-        
-        if (!token) {
-          set({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-          });
-          return;
-        }
-
         try {
-          const response = await authAPI.verifyToken();
-          if (response.success && response.data) {
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (session?.user) {
+            // Transform Supabase user to IUser format
+            const user: IUser = {
+              id: session.user.id,
+              email: session.user.email!,
+              name: session.user.user_metadata?.name || session.user.email!,
+              role: session.user.user_metadata?.role || 'user',
+              department: session.user.user_metadata?.department,
+              createdAt: session.user.created_at,
+              updatedAt: session.user.updated_at,
+            };
+
             set({
-              user: response.data,
-              token,
+              user,
+              token: session.access_token,
               isAuthenticated: true,
             });
           } else {
-            throw new Error('Token verification failed');
+            set({
+              user: null,
+              token: null,
+              isAuthenticated: false,
+            });
           }
         } catch (error) {
-          // Token is invalid, clear everything
-          localStorage.removeItem(LOCAL_STORAGE_KEYS.AUTH_TOKEN);
+          console.error('Auth check error:', error);
           set({
             user: null,
             token: null,
