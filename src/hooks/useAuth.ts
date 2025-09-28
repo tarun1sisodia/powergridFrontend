@@ -1,12 +1,26 @@
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
+import { supabase } from '@/integrations/supabase/client';
 
 export const useAuth = () => {
   const authStore = useAuthStore();
 
   useEffect(() => {
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          authStore.logout();
+        } else if (session) {
+          authStore.checkAuth();
+        }
+      }
+    );
+
     // Check authentication status on mount
     authStore.checkAuth();
+
+    return () => subscription.unsubscribe();
   }, []);
 
   return {
