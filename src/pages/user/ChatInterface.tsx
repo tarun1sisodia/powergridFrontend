@@ -20,7 +20,7 @@ import {
   Clock,
   MessageSquare 
 } from 'lucide-react';
-import { ticketsAPI } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { formatRelativeDate } from '@/lib/utils';
 import type { IChatMessage } from '@/types';
 
@@ -80,16 +80,22 @@ export default function ChatInterface() {
     clearPersistedValue();
 
     try {
-      // Call API to get AI response
-      const response = await ticketsAPI.submitQuery(data.message);
+      // Call Supabase Edge Function for AI response
+      const { data: response, error } = await supabase.functions.invoke('ai-chat', {
+        body: { message: data.message }
+      });
       
-      if (response.success && response.data) {
+      if (error) {
+        throw new Error(error.message || 'Failed to get AI response');
+      }
+      
+      if (response) {
         const aiMessage: IChatMessage = {
           id: (Date.now() + 1).toString(),
           type: 'ai',
-          content: response.data.response,
+          content: response.response,
           timestamp: new Date().toISOString(),
-          ticketId: response.data.ticketId,
+          ticketId: response.ticketId,
         };
         
         setMessages(prev => [...prev, aiMessage]);
@@ -99,7 +105,7 @@ export default function ChatInterface() {
           description: 'AI has analyzed your query and provided a solution.',
         });
       } else {
-        throw new Error(response.message || 'Failed to get response');
+        throw new Error('No response received from AI');
       }
     } catch (error: any) {
       // Add error message
